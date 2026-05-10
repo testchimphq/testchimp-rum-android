@@ -15,8 +15,8 @@ if [[ -z "$VERSION" ]]; then
 fi
 
 echo "libraryVersion in Gradle: $VERSION"
-echo "After push, JitPack will serve (multi-module layout — groupId uses dots):"
-echo "  implementation(\"com.github.testchimphq.testchimp-rum-android:testchimp-rum:$VERSION\")"
+echo "After push, JitPack will serve (see https://jitpack.io/#testchimphq/testchimp-rum-android):"
+echo "  implementation(\"com.github.testchimphq:testchimp-rum-android:$VERSION\")"
 echo "  maven(\"https://jitpack.io\")"
 echo ""
 read -r -p "Create annotated git tag '$VERSION' and push to origin? [y/N] " ok

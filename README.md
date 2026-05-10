@@ -35,15 +35,15 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    // JitPack multi-module: groupId = com.github.<github_user>.<repo> — note the dots
-    implementation("com.github.testchimphq.testchimp-rum-android:testchimp-rum:0.1.0")
+    implementation("com.github.testchimphq:testchimp-rum-android:0.1.0")
 }
 ```
 
-Use the **exact git tag** you depend on (e.g. `0.1.0`). After the first push, confirm the line JitPack shows at  
-[![](https://jitpack.io/v/testchimphq/testchimp-rum-android.svg)](https://jitpack.io/#testchimphq/testchimp-rum-android)
+Use the **exact version** JitPack lists for your **git tag** (e.g. `0.1.0`), or a snapshot such as **`master-SNAPSHOT`** while testing—see [JitPack — testchimp-rum-android](https://jitpack.io/#testchimphq/testchimp-rum-android).
 
-If JitPack’s UI shows a slightly different coordinate, prefer **their** copy-paste line for that tag.
+If the site shows a slightly different line after the build completes, prefer **their** copy-paste.
+
+[![](https://jitpack.io/v/testchimphq/testchimp-rum-android.svg)](https://jitpack.io/#testchimphq/testchimp-rum-android)
 
 ### Option B — Git submodule / local module
 
