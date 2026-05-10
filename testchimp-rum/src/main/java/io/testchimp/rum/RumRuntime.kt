@@ -1,0 +1,219 @@
+package io.testchimp.rum
+
+import android.content.Context
+import android.os.Build
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+
+internal class RumRuntime(
+    context: Context,
+    private val config: TestChimpRumConfig,
+) {
+    private val sessionStore = SessionStore(context)
+    private val automation = AutomationContext()
+    private val executor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "testchimp-rum").apply { isDaemon = true }
+    }
+    private val flushScheduler = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "testchimp-rum-flush").apply { isDaemon = true }
+    }
+
+    @Volatile
+    var storedSessionId: String = ""
+        private set
+
+    private val opts = config.options
+    private var captureEnabled = opts?.captureEnabled ?: true
+    private var maxEventsPerSession = opts?.maxEventsPerSession ?: 100
+    private var maxRepeatsPerEvent = opts?.maxRepeatsPerEvent ?: 3
+    private var maxBufferSize = opts?.maxBufferSize ?: 100
+    private var eventSendIntervalMs = opts?.eventSendIntervalMillis ?: 10_000L
+    private var inactivityTimeoutMs = opts?.inactivityTimeoutMillis ?: (30 * 60 * 1000L)
+    private var baseUrl = (opts?.testchimpEndpoint?.trimEnd('/') ?: "https://ingress.testchimp.io")
+
+    private var flushTask: ScheduledFuture<*>? = null
+
+    private data class BufferedEvent(
+        val title: String,
+        val timestampMillis: Long,
+        val metadata: JSONObject?,
+        val eventIndex: Int,
+        val ciTestInfoSnapshot: String?,
+    )
+
+    private val buffer = mutableListOf<BufferedEvent>()
+
+    init {
+        opts?.automationContextTtlSeconds?.let { if (it > 0) automation.ttlSeconds = it }
+    }
+
+    fun start() {
+        val normalizedMeta = RumValidation.normalizeMetadataFromMap(config.sessionMetadata)
+        val (sid, isNew) = sessionStore.loadOrCreateSessionId(
+            config.sessionId,
+            normalizedMeta,
+            inactivityTimeoutMs,
+        )
+        storedSessionId = sid
+
+        if (isNew && captureEnabled) {
+            sendSessionStart()
+        }
+
+        flushTask = flushScheduler.scheduleAtFixedRate(
+            { executor.submit { flushLocked() } },
+            eventSendIntervalMs,
+            eventSendIntervalMs,
+            TimeUnit.MILLISECONDS,
+        )
+    }
+
+    fun tearDown() {
+        flushTask?.cancel(false)
+        flushTask = null
+        flushScheduler.shutdownNow()
+        try {
+            executor.submit {
+                flushLocked()
+                sessionStore.clearAll()
+                automation.clear()
+                buffer.clear()
+            }.get(5, TimeUnit.SECONDS)
+        } catch (_: Exception) {
+            // ignore
+        }
+        executor.shutdownNow()
+    }
+
+    private fun defaultMetadataForStart(): JSONObject {
+        val m = JSONObject()
+        m.put("_os", "android")
+        m.put("_device_type", "mobile")
+        m.put("_platform", "native")
+        m.put("_device_model", Build.MODEL ?: "unknown")
+        return m
+    }
+
+    fun handleAutomationUri(uri: android.net.Uri?): Boolean {
+        return AutomationUri.handle(uri, automation)
+    }
+
+    fun clearAutomationContext() {
+        automation.clear()
+    }
+
+    fun emit(input: TestChimpEmitInput) {
+        if (!captureEnabled) return
+        if (RumValidation.buildEmitPayload(input.title, input.metadata) == null) return
+        val snap = automation.snapshotForEmit()
+        executor.submit {
+            sessionStore.touchActivity()
+            val title = input.title
+            if (sessionStore.eventCount() >= maxEventsPerSession) return@submit
+            val counts = sessionStore.eventTypeCounts()
+            if ((counts[title] ?: 0) >= maxRepeatsPerEvent) return@submit
+
+            val ts = System.currentTimeMillis()
+            val meta = RumValidation.normalizeMetadataFromMap(input.metadata)
+
+            val next = sessionStore.eventCount() + 1
+            sessionStore.setEventCount(next)
+            counts[title] = (counts[title] ?: 0) + 1
+            sessionStore.setEventTypeCounts(counts)
+
+            buffer.add(
+                BufferedEvent(
+                    title = title,
+                    timestampMillis = ts,
+                    metadata = meta,
+                    eventIndex = next,
+                    ciTestInfoSnapshot = snap,
+                ),
+            )
+            if (buffer.size >= maxBufferSize) {
+                flushLocked()
+            }
+        }
+    }
+
+    fun flush(wait: Boolean) {
+        if (wait) {
+            val done = java.util.concurrent.CountDownLatch(1)
+            executor.submit {
+                try {
+                    flushLocked()
+                } finally {
+                    done.countDown()
+                }
+            }
+            try {
+                done.await(5, TimeUnit.SECONDS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        } else {
+            executor.submit { flushLocked() }
+        }
+    }
+
+    private fun flushLocked() {
+        if (buffer.isEmpty()) return
+        val batch = ArrayList(buffer)
+        buffer.clear()
+        postEvents(batch)
+    }
+
+    private fun sendSessionStart() {
+        val meta = JSONObject()
+        if (opts?.enableDefaultSessionMetadata ?: true) {
+            copyJsonKeys(defaultMetadataForStart(), meta)
+        }
+        sessionStore.sessionMetadata()?.let { copyJsonKeys(it, meta) }
+
+        val body = JSONObject()
+        body.put("session_id", storedSessionId)
+        body.put("started_at", System.currentTimeMillis())
+        body.put("metadata", meta)
+        body.put("environment", config.environment)
+        config.release?.let { body.put("release", it) }
+        config.branchName?.let { body.put("branch_name", it) }
+
+        val ci = automation.snapshotForEmit()
+        RumHttp.postJson(baseUrl, "/rum/session/start", body, config.projectId, config.apiKey, ci)
+    }
+
+    private fun postEvents(events: List<BufferedEvent>) {
+        val arr = JSONArray()
+        for (e in events) {
+            val o = JSONObject()
+            o.put("title", e.title)
+            o.put("event_index", e.eventIndex)
+            o.put("timestamp_millis", e.timestampMillis)
+            o.put("metadata", e.metadata ?: JSONObject())
+            arr.put(o)
+        }
+        val body = JSONObject()
+        body.put("session_id", storedSessionId)
+        body.put("events", arr)
+        val ciHeader = batchCiTestInfoHeader(events)
+        RumHttp.postJson(baseUrl, "/rum/events", body, config.projectId, config.apiKey, ciHeader)
+    }
+
+    private fun batchCiTestInfoHeader(events: List<BufferedEvent>): String? {
+        val snaps = events.mapNotNull { it.ciTestInfoSnapshot }
+        val first = snaps.firstOrNull() ?: return null
+        return if (snaps.all { it == first }) first else snaps.first()
+    }
+
+    /** `JSONObject.keys()` is a [java.util.Iterator]; avoid Kotlin `for (k in keys)` misuse. */
+    private fun copyJsonKeys(from: JSONObject, to: JSONObject) {
+        val it = from.keys()
+        while (it.hasNext()) {
+            val k = it.next()
+            to.put(k, from.get(k))
+        }
+    }
+}

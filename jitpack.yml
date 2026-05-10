@@ -1,0 +1,7 @@
+# https://docs.jitpack.io/
+# JitPack sets ANDROID_HOME; we pin JDK 17 for AGP 8.2 + Kotlin 1.9.
+jdk:
+  - openjdk17
+
+install:
+  - ./gradlew :testchimp-rum:assembleRelease :testchimp-rum:publishReleasePublicationToMavenLocal --no-daemon --stacktrace -x test
