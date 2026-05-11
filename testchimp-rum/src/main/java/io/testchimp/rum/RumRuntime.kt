@@ -3,6 +3,7 @@ package io.testchimp.rum
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -60,7 +61,7 @@ internal class RumRuntime(
         storedSessionId = sid
 
         if (isNew && captureEnabled) {
-            sendSessionStart()
+            executor.submit { sendSessionStart() }
         }
 
         flushTask = flushScheduler.scheduleAtFixedRate(
@@ -89,18 +90,41 @@ internal class RumRuntime(
     }
 
     fun handleAutomationUri(uri: android.net.Uri?): Boolean {
-        return AutomationUri.handle(uri, automation)
+        if (isTrueCoverageClear(uri)) {
+            try {
+                executor.submit {
+                    flushLocked()
+                    automation.clear()
+                }.get(2, TimeUnit.SECONDS)
+            } catch (_: Exception) {
+                automation.clear()
+            }
+            return true
+        }
+        return try {
+            executor.submit(Callable { AutomationUri.handle(uri, automation) })
+                .get(2, TimeUnit.SECONDS)
+        } catch (_: Exception) {
+            AutomationUri.handle(uri, automation)
+        }
     }
 
     fun clearAutomationContext() {
-        automation.clear()
+        try {
+            executor.submit {
+                flushLocked()
+                automation.clear()
+            }.get(2, TimeUnit.SECONDS)
+        } catch (_: Exception) {
+            automation.clear()
+        }
     }
 
     fun emit(input: TestChimpEmitInput) {
         if (!captureEnabled) return
         if (RumValidation.buildEmitPayload(input.title, input.metadata) == null) return
-        val snap = automation.snapshotForEmit()
         executor.submit {
+            val snap = automation.snapshotForEmit()
             sessionStore.touchActivity()
             val title = input.title
             if (sessionStore.eventCount() >= maxEventsPerSession) return@submit
@@ -177,26 +201,48 @@ internal class RumRuntime(
     }
 
     private fun postEvents(events: List<BufferedEvent>) {
-        val arr = JSONArray()
-        for (e in events) {
-            val o = JSONObject()
-            o.put("title", e.title)
-            o.put("event_index", e.eventIndex)
-            o.put("timestamp_millis", e.timestampMillis)
-            o.put("metadata", e.metadata ?: JSONObject())
-            arr.put(o)
+        for (partition in partitionByCiSnapshot(events)) {
+            val arr = JSONArray()
+            for (e in partition) {
+                val o = JSONObject()
+                o.put("title", e.title)
+                o.put("event_index", e.eventIndex)
+                o.put("timestamp_millis", e.timestampMillis)
+                o.put("metadata", e.metadata ?: JSONObject())
+                arr.put(o)
+            }
+            val body = JSONObject()
+            body.put("session_id", storedSessionId)
+            body.put("events", arr)
+            val ciHeader = partition.firstOrNull()?.ciTestInfoSnapshot
+            RumHttp.postJson(baseUrl, "/rum/events", body, config.projectId, config.apiKey, ciHeader)
         }
-        val body = JSONObject()
-        body.put("session_id", storedSessionId)
-        body.put("events", arr)
-        val ciHeader = batchCiTestInfoHeader(events)
-        RumHttp.postJson(baseUrl, "/rum/events", body, config.projectId, config.apiKey, ciHeader)
     }
 
-    private fun batchCiTestInfoHeader(events: List<BufferedEvent>): String? {
-        val snaps = events.mapNotNull { it.ciTestInfoSnapshot }
-        val first = snaps.firstOrNull() ?: return null
-        return if (snaps.all { it == first }) first else snaps.first()
+    private fun partitionByCiSnapshot(events: List<BufferedEvent>): List<List<BufferedEvent>> {
+        if (events.isEmpty()) return emptyList()
+        val out = mutableListOf<MutableList<BufferedEvent>>()
+        var current = mutableListOf(events.first())
+        var currentCi = events.first().ciTestInfoSnapshot
+        for (i in 1 until events.size) {
+            val e = events[i]
+            if (e.ciTestInfoSnapshot == currentCi) {
+                current.add(e)
+                continue
+            }
+            out.add(current)
+            current = mutableListOf(e)
+            currentCi = e.ciTestInfoSnapshot
+        }
+        out.add(current)
+        return out
+    }
+
+    private fun isTrueCoverageClear(uri: android.net.Uri?): Boolean {
+        if (uri == null) return false
+        if (uri.scheme?.lowercase() != "testchimp-rum") return false
+        if (uri.host?.lowercase() != "truecoverage") return false
+        return uri.path?.lowercase() == "/v1/clear"
     }
 
     /** `JSONObject.keys()` is a [java.util.Iterator]; avoid Kotlin `for (k in keys)` misuse. */

@@ -1,5 +1,5 @@
 # https://docs.jitpack.io/
-# JitPack sets ANDROID_HOME; we pin JDK 17 for AGP 8.2 + Kotlin 1.9.
+# JitPack sets ANDROID_HOME; JDK 17 for AGP 8.7 + Kotlin 2.0.
 jdk:
   - openjdk17
 
