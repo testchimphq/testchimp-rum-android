@@ -1,7 +1,6 @@
 package io.testchimp.rum
 
 import android.content.Context
-import android.os.Build
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.Executors
@@ -12,6 +11,7 @@ internal class RumRuntime(
     context: Context,
     private val config: TestChimpRumConfig,
 ) {
+    private val appContext = context.applicationContext
     private val sessionStore = SessionStore(context)
     private val automation = AutomationContext()
     private val executor = Executors.newSingleThreadExecutor { r ->
@@ -88,15 +88,6 @@ internal class RumRuntime(
         executor.shutdownNow()
     }
 
-    private fun defaultMetadataForStart(): JSONObject {
-        val m = JSONObject()
-        m.put("_os", "android")
-        m.put("_device_type", "mobile")
-        m.put("_platform", "native")
-        m.put("_device_model", Build.MODEL ?: "unknown")
-        return m
-    }
-
     fun handleAutomationUri(uri: android.net.Uri?): Boolean {
         return AutomationUri.handle(uri, automation)
     }
@@ -169,7 +160,7 @@ internal class RumRuntime(
     private fun sendSessionStart() {
         val meta = JSONObject()
         if (opts?.enableDefaultSessionMetadata ?: true) {
-            copyJsonKeys(defaultMetadataForStart(), meta)
+            copyJsonKeys(DefaultSessionMetadata.forSessionStart(appContext), meta)
         }
         sessionStore.sessionMetadata()?.let { copyJsonKeys(it, meta) }
 
