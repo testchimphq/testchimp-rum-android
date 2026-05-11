@@ -36,9 +36,10 @@ object TestChimpRum {
         r.emit(input)
     }
 
+    /** Drains the in-memory buffer on the RUM executor (waits briefly) so process death does not drop events. */
     @JvmStatic
     fun flush() {
-        runtime?.flush(wait = false)
+        runtime?.flush(wait = true)
     }
 
     @JvmStatic
