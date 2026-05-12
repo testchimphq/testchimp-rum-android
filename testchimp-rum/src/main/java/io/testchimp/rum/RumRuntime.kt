@@ -106,12 +106,28 @@ internal class RumRuntime(
             }
             return true
         }
+        if (isTrueCoverageSet(uri)) {
+            // Apply CI on the caller thread so memory is updated before `device.openUrl` returns to the
+            // runner (shrinks the window where the app can emit without ci_test_info after launch).
+            return try {
+                AutomationUri.handle(uri, automation)
+            } catch (_: Throwable) {
+                false
+            }
+        }
         return try {
             executor.submit(Callable { AutomationUri.handle(uri, automation) })
                 .get(2, TimeUnit.SECONDS)
         } catch (_: Exception) {
             AutomationUri.handle(uri, automation)
         }
+    }
+
+    private fun isTrueCoverageSet(uri: android.net.Uri?): Boolean {
+        if (uri == null) return false
+        if (uri.scheme?.lowercase() != "testchimp-rum") return false
+        if (uri.host?.lowercase() != "truecoverage") return false
+        return uri.path?.lowercase() == "/v1/set"
     }
 
     fun clearAutomationContext() {
