@@ -40,4 +40,18 @@ internal class AutomationContext {
             return j
         }
     }
+
+    /** Same eligibility as [snapshotForEmit] without allocating the JSON string (host debug logging). */
+    fun hasActiveCiTestInfo(): Boolean {
+        lock.withLock {
+            val j = ciTestInfoJson ?: return false
+            if (j.isEmpty()) return false
+            val now = System.currentTimeMillis() / 1000.0
+            if (now - updatedAtSeconds > ttlSeconds) {
+                ciTestInfoJson = null
+                return false
+            }
+            return true
+        }
+    }
 }

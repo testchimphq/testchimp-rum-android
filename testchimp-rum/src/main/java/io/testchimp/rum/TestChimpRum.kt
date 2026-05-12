@@ -39,6 +39,18 @@ object TestChimpRum {
         }
     }
 
+    /**
+     * Whether TrueCoverage / automation CI is currently present (same rules as the next [emit] `ci-test-info` snapshot).
+     * For host-app troubleshooting only; cheap lock read on the caller thread.
+     */
+    @JvmStatic
+    fun hasCiTestInfo(): Boolean =
+        try {
+            runtime?.hasCiTestInfo() ?: false
+        } catch (_: Throwable) {
+            false
+        }
+
     /** Drains the in-memory buffer on the RUM executor (waits briefly) so process death does not drop events. */
     @JvmStatic
     fun flush() {

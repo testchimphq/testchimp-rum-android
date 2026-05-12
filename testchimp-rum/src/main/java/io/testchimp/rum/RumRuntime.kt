@@ -125,6 +125,14 @@ internal class RumRuntime(
         }
     }
 
+    /** Caller-thread peek; matches what the next [emit] would attach for TrueCoverage (TTL applied). */
+    fun hasCiTestInfo(): Boolean =
+        try {
+            automation.hasActiveCiTestInfo()
+        } catch (_: Throwable) {
+            false
+        }
+
     /**
      * Fire-and-forget: reads current TrueCoverage CI on the caller thread (rum-js / `__TC_CI_TEST_INFO` parity),
      * then enqueues buffer/network work. Never throws to the app.
