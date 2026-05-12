@@ -3,7 +3,7 @@ package io.testchimp.rum
 import android.net.Uri
 import android.util.Base64
 
-/** `testchimp-rum://truecoverage/v1/set?p=<base64url>` and `.../v1/clear` — matches iOS + @testchimp/playwright defaults. */
+/** `testchimp-rum://truecoverage/v1/set?p=<base64url>`, `.../v1/clear`; `.../v1/flush` is handled in RumRuntime.handleAutomationUri. */
 internal object AutomationUri {
     fun handle(uri: Uri?, context: AutomationContext): Boolean {
         if (uri == null) return false

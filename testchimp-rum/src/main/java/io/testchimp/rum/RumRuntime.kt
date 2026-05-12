@@ -115,6 +115,15 @@ internal class RumRuntime(
                 false
             }
         }
+        if (isTrueCoverageFlush(uri)) {
+            // Drain buffered events before `device.openUrl` returns (short Mobilewright tests vs timer flush).
+            return try {
+                flush(wait = true)
+                true
+            } catch (_: Throwable) {
+                false
+            }
+        }
         return try {
             executor.submit(Callable { AutomationUri.handle(uri, automation) })
                 .get(2, TimeUnit.SECONDS)
@@ -128,6 +137,13 @@ internal class RumRuntime(
         if (uri.scheme?.lowercase() != "testchimp-rum") return false
         if (uri.host?.lowercase() != "truecoverage") return false
         return uri.path?.lowercase() == "/v1/set"
+    }
+
+    private fun isTrueCoverageFlush(uri: android.net.Uri?): Boolean {
+        if (uri == null) return false
+        if (uri.scheme?.lowercase() != "testchimp-rum") return false
+        if (uri.host?.lowercase() != "truecoverage") return false
+        return uri.path?.lowercase() == "/v1/flush"
     }
 
     fun clearAutomationContext() {
