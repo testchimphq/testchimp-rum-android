@@ -25,6 +25,10 @@ internal class AutomationContext {
         }
     }
 
+    /**
+     * Snapshot of current CI JSON for the `ci-test-info` header. Thread-safe from any thread
+     * (e.g. caller thread at [RumRuntime.emit] entry before work is queued).
+     */
     fun snapshotForEmit(): String? {
         lock.withLock {
             val j = ciTestInfoJson ?: return null

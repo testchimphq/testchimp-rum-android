@@ -4,7 +4,7 @@ plugins {
     id("maven-publish")
 }
 
-val libraryVersion = "0.1.3"
+val libraryVersion = "0.1.4"
 
 group = "io.testchimp"
 version = libraryVersion

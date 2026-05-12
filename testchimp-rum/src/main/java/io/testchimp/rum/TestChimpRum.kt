@@ -32,8 +32,11 @@ object TestChimpRum {
 
     @JvmStatic
     fun emit(input: TestChimpEmitInput) {
-        val r = runtime ?: return
-        r.emit(input)
+        try {
+            val r = runtime ?: return
+            r.emit(input)
+        } catch (_: Throwable) {
+        }
     }
 
     /** Drains the in-memory buffer on the RUM executor (waits briefly) so process death does not drop events. */

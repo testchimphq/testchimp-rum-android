@@ -61,7 +61,12 @@ internal class RumRuntime(
         storedSessionId = sid
 
         if (isNew && captureEnabled) {
-            executor.submit { sendSessionStart() }
+            executor.submit {
+                try {
+                    sendSessionStart()
+                } catch (_: Throwable) {
+                }
+            }
         }
 
         flushTask = flushScheduler.scheduleAtFixedRate(
@@ -120,37 +125,61 @@ internal class RumRuntime(
         }
     }
 
+    /**
+     * Fire-and-forget: reads current TrueCoverage CI on the caller thread (rum-js / `__TC_CI_TEST_INFO` parity),
+     * then enqueues buffer/network work. Never throws to the app.
+     */
     fun emit(input: TestChimpEmitInput) {
-        if (!captureEnabled) return
-        if (RumValidation.buildEmitPayload(input.title, input.metadata) == null) return
-        executor.submit {
-            val snap = automation.snapshotForEmit()
-            sessionStore.touchActivity()
-            val title = input.title
-            if (sessionStore.eventCount() >= maxEventsPerSession) return@submit
-            val counts = sessionStore.eventTypeCounts()
-            if ((counts[title] ?: 0) >= maxRepeatsPerEvent) return@submit
-
-            val ts = System.currentTimeMillis()
-            val meta = RumValidation.normalizeMetadataFromMap(input.metadata)
-
-            val next = sessionStore.eventCount() + 1
-            sessionStore.setEventCount(next)
-            counts[title] = (counts[title] ?: 0) + 1
-            sessionStore.setEventTypeCounts(counts)
-
-            buffer.add(
-                BufferedEvent(
-                    title = title,
-                    timestampMillis = ts,
-                    metadata = meta,
-                    eventIndex = next,
-                    ciTestInfoSnapshot = snap,
-                ),
-            )
-            if (buffer.size >= maxBufferSize) {
-                flushLocked()
+        try {
+            if (!captureEnabled) return
+            if (RumValidation.buildEmitPayload(input.title, input.metadata) == null) return
+            val ciSnap = try {
+                automation.snapshotForEmit()
+            } catch (_: Throwable) {
+                null
             }
+            try {
+                executor.submit {
+                    try {
+                        emitOnExecutor(input, ciSnap)
+                    } catch (_: Throwable) {
+                    }
+                }
+            } catch (_: Throwable) {
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun emitOnExecutor(input: TestChimpEmitInput, ciSnap: String?) {
+        // BufferedEvent.ciTestInfoSnapshot must use ciSnap only — TrueCoverage CI was captured on the
+        // caller thread in emit(); do not call automation.snapshotForEmit() here (would re-open ordering
+        // bugs vs clear/set on this same executor).
+        sessionStore.touchActivity()
+        val title = input.title
+        if (sessionStore.eventCount() >= maxEventsPerSession) return
+        val counts = sessionStore.eventTypeCounts()
+        if ((counts[title] ?: 0) >= maxRepeatsPerEvent) return
+
+        val ts = System.currentTimeMillis()
+        val meta = RumValidation.normalizeMetadataFromMap(input.metadata)
+
+        val next = sessionStore.eventCount() + 1
+        sessionStore.setEventCount(next)
+        counts[title] = (counts[title] ?: 0) + 1
+        sessionStore.setEventTypeCounts(counts)
+
+        buffer.add(
+            BufferedEvent(
+                title = title,
+                timestampMillis = ts,
+                metadata = meta,
+                eventIndex = next,
+                ciTestInfoSnapshot = ciSnap,
+            ),
+        )
+        if (buffer.size >= maxBufferSize) {
+            flushLocked()
         }
     }
 
@@ -178,7 +207,10 @@ internal class RumRuntime(
         if (buffer.isEmpty()) return
         val batch = ArrayList(buffer)
         buffer.clear()
-        postEvents(batch)
+        try {
+            postEvents(batch)
+        } catch (_: Throwable) {
+        }
     }
 
     private fun sendSessionStart() {
