@@ -5,6 +5,10 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 internal object RumHttp {
+    const val RUM_PLATFORM_HEADER = "testchimp-rum-platform"
+    /** {@link com.aware.protos.common.ExecutionPlatform} ordinal for Android. */
+    const val ANDROID_PLATFORM_ORDINAL = 3
+
     fun postJson(
         baseUrl: String,
         path: String,
@@ -12,6 +16,7 @@ internal object RumHttp {
         projectId: String,
         apiKey: String,
         ciTestInfo: String?,
+        rumPlatform: Int = ANDROID_PLATFORM_ORDINAL,
     ) {
         val url = URL(baseUrl.trimEnd('/') + path)
         val conn = (url.openConnection() as HttpURLConnection).apply {
@@ -22,6 +27,7 @@ internal object RumHttp {
             if (!ciTestInfo.isNullOrEmpty()) {
                 setRequestProperty("ci-test-info", ciTestInfo)
             }
+            setRequestProperty(RUM_PLATFORM_HEADER, rumPlatform.toString())
             doOutput = true
             connectTimeout = 15_000
             readTimeout = 15_000
